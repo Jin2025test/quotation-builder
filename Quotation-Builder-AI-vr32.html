@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Version: v31 - Updated: 20250111 - 7 Equipment Systems (AFS/CONV/SILO/DRY/GBR-DH/SILO-DH/ETS) + Real Pricing Data -->
+<!-- Version: v33 - Updated: 20250113 - Bug fixes: Value Proposition truncation, JSON filename, Font consistency, Retrofit info, AI Chat Panel -->
 
 <html lang="fr">
 <head>
@@ -259,6 +259,25 @@ textarea{min-height:84px}
 .tool-card select{margin-bottom:10px}
 .loading{display:inline-block;width:16px;height:16px;border:2px solid #bf1122;border-top-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* AI Chat Panel - Step-specific AI Assistant */
+.ai-chat-panel{position:fixed;bottom:20px;right:20px;width:380px;max-height:500px;background:#ffffff;border:2px solid #003361;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.2);z-index:1000;display:flex;flex-direction:column;overflow:hidden;transition:all 0.3s ease}
+.ai-chat-panel.minimized{max-height:48px;width:200px}
+.ai-chat-panel.minimized .ai-chat-body,.ai-chat-panel.minimized .ai-chat-input{display:none}
+.ai-chat-header{background:#003361;color:white;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.ai-chat-header span{font-weight:600;font-size:14px}
+.ai-chat-header button{background:transparent;border:none;color:white;font-size:16px;cursor:pointer;padding:4px 8px}
+.ai-chat-body{flex:1;overflow-y:auto;padding:16px;background:#f8f9fa;max-height:300px}
+.ai-chat-message{margin-bottom:12px;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.5;max-width:85%}
+.ai-chat-message.user{background:#003361;color:white;margin-left:auto;border-bottom-right-radius:4px}
+.ai-chat-message.assistant{background:#ffffff;color:#000000;border:1px solid #c8cbca;border-bottom-left-radius:4px}
+.ai-chat-input{display:flex;gap:8px;padding:12px;border-top:1px solid #c8cbca;background:#ffffff}
+.ai-chat-input input{flex:1;padding:10px 14px;border:1px solid #c8cbca;border-radius:8px;font-size:14px;font-family:inherit}
+.ai-chat-input input:focus{outline:none;border-color:#003361}
+.ai-chat-input button{padding:10px 16px;background:#003361;color:white;border:none;border-radius:8px;font-weight:600;cursor:pointer}
+.ai-chat-input button:hover{background:#00254a}
+.ai-chat-input button:disabled{background:#c8cbca;cursor:not-allowed}
+.ai-chat-typing{font-style:italic;color:#6b7280;font-size:12px;padding:8px}
 
 /* Meeting Section */
 .meeting-section{margin:20px 0;padding:20px;background:#ffffff;border:2px solid #003361;border-radius:8px;color:#000000}
@@ -1943,6 +1962,95 @@ function $(sel) { return document.querySelector(sel); }
 function el(tag, cls) { var elem = document.createElement(tag); if (cls) elem.className = cls; return elem; }
 function getv(path) { var seg = path.split('.'); var cur = state; for (var i = 0; i < seg.length; i++) { if (!cur) return ''; cur = cur[seg[i]]; } return cur || ''; }
 function setv(path, val) { var seg = path.split('.'); var cur = state; for (var i = 0; i < seg.length - 1; i++) { if (!cur[seg[i]]) cur[seg[i]] = {}; cur = cur[seg[i]]; } cur[seg[seg.length - 1]] = val; }
+
+// =============================================================================
+// Smart Text Summarizer for Quote Box (Step 07)
+// =============================================================================
+function summarizeForQuoteBox(text, maxLength) {
+  if (!text) return '';
+  
+  // If already short enough, return as-is
+  if (text.length <= maxLength) return text;
+  
+  // Split into sentences
+  var sentences = text.split(/(?<=[.!?])\s+/);
+  
+  // Priority keywords for industrial quotations
+  var priorityKeywords = [
+    'proposal', 'proposition', 'retrofit', 'modification', 'evaluation',
+    'system', 'système', 'equipment', 'équipement', 'dust', 'poussière',
+    'collection', 'filtration', 'associated', 'associé', 'process', 'procédé',
+    'materials', 'matériaux', 'handled', 'traités'
+  ];
+  
+  // Score sentences by importance
+  var scoredSentences = sentences.map(function(sentence, idx) {
+    var score = 0;
+    var lowerSentence = sentence.toLowerCase();
+    
+    // First sentence gets bonus (usually contains project type)
+    if (idx === 0) score += 10;
+    
+    // Check for priority keywords
+    priorityKeywords.forEach(function(keyword) {
+      if (lowerSentence.indexOf(keyword) !== -1) score += 2;
+    });
+    
+    // Penalize very long sentences
+    if (sentence.length > 200) score -= 2;
+    
+    // Penalize sentences that are just lists of exclusions
+    if (lowerSentence.indexOf('excluded') !== -1 || lowerSentence.indexOf('exclu') !== -1) score -= 3;
+    if (lowerSentence.indexOf('not included') !== -1 || lowerSentence.indexOf('non inclus') !== -1) score -= 3;
+    
+    return { text: sentence, score: score, idx: idx };
+  });
+  
+  // Sort by score (descending), then by original position
+  scoredSentences.sort(function(a, b) {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.idx - b.idx;
+  });
+  
+  // Build summary with top sentences, maintaining original order
+  var selectedSentences = [];
+  var currentLength = 0;
+  
+  // Always include first sentence (project intro)
+  if (sentences.length > 0) {
+    selectedSentences.push({ text: sentences[0], idx: 0 });
+    currentLength = sentences[0].length;
+  }
+  
+  // Add more sentences by score until we hit the limit
+  for (var i = 0; i < scoredSentences.length && currentLength < maxLength - 50; i++) {
+    var s = scoredSentences[i];
+    if (s.idx === 0) continue; // Skip first sentence (already added)
+    
+    if (currentLength + s.text.length + 1 <= maxLength) {
+      selectedSentences.push(s);
+      currentLength += s.text.length + 1;
+    }
+  }
+  
+  // Sort by original position to maintain logical flow
+  selectedSentences.sort(function(a, b) { return a.idx - b.idx; });
+  
+  // Join and return
+  var result = selectedSentences.map(function(s) { return s.text; }).join(' ');
+  
+  // If still too long, truncate at last complete sentence
+  if (result.length > maxLength) {
+    var lastPeriod = result.lastIndexOf('.', maxLength);
+    if (lastPeriod > maxLength * 0.5) {
+      result = result.substring(0, lastPeriod + 1);
+    } else {
+      result = result.substring(0, maxLength - 3) + '...';
+    }
+  }
+  
+  return result;
+}
 
 // Global function for Clear Cache button
 function clearCacheAndReload() {
@@ -11873,14 +11981,14 @@ function generateCustomerNeedsSummary(box) {
     }
   }
   
-  // Add special requirements from customer needs
+  // Add special requirements from customer needs (FULL TEXT - no truncation)
   if (needs.special_requirements) {
     scopeText += '<br><br>';
     scopeText += LANG === 'fr'
       ? '<strong>Exigences particulières:</strong> '
       : '<strong>Special requirements:</strong> ';
-    scopeText += needs.special_requirements.substring(0, 300);
-    if (needs.special_requirements.length > 300) scopeText += '...';
+    // Include full text without truncation for complete documentation
+    scopeText += needs.special_requirements;
   }
   
   // Add budget and timeline
@@ -12182,17 +12290,28 @@ function renderOptionsWithEquipment(box, site, perf, needs) {
     generateBtn.innerHTML = '⏳ ' + (LANG === 'fr' ? 'Génération...' : 'Generating...');
     
     setTimeout(function() {
-      var perf = state.project.performance || {};
+      var perf = state.project.perf || {};
       var header = state.project.header || {};
-      var budgetValue = perf.budget_range || '';
-      var timelineValue = perf.desired_timeline || '';
-      var specialReqs = perf.special_requirements || '';
-      var industry = header.industry || '';
+      var site = state.project.site || {};
+      var customerNeeds = perf.customer_needs || {};
+      
+      var budgetValue = customerNeeds.budget_range || perf.budget_range || '';
+      var timelineValue = customerNeeds.timeline || perf.desired_timeline || '';
+      var specialReqs = customerNeeds.special_requirements || perf.special_requirements || '';
+      var industry = site.industry_sector || header.industry || '';
       var projectName = header.project_name || '';
+      
+      // Detect project type from special requirements or existing equipment
+      var isRetrofit = (specialReqs && (
+        specialReqs.toLowerCase().indexOf('retrofit') !== -1 ||
+        specialReqs.toLowerCase().indexOf('existing') !== -1 ||
+        specialReqs.toLowerCase().indexOf('reuse') !== -1 ||
+        specialReqs.toLowerCase().indexOf('modification') !== -1
+      )) || (site.existing_equipment && site.existing_equipment.length > 0);
       
       var reportParagraphs = [];
       
-      // Paragraph 1: Customer Overview
+      // Paragraph 1: Customer Overview with Project Type
       var p1 = LANG === 'fr' ? '<strong style="color:#003361">Profil Client:</strong> ' : '<strong style="color:#003361">Customer Profile:</strong> ';
       if (projectName) {
         p1 += LANG === 'fr' ? 'Pour le projet "' + projectName + '", ' : 'For the project "' + projectName + '", ';
@@ -12212,7 +12331,7 @@ function renderOptionsWithEquipment(box, site, perf, needs) {
       }
       reportParagraphs.push(p1);
       
-      // Paragraph 2: Constraints
+      // Paragraph 2: Constraints with full special requirements
       var p2 = LANG === 'fr' ? '<strong style="color:#003361">Contraintes:</strong> ' : '<strong style="color:#003361">Constraints:</strong> ';
       var constraints = [];
       if (budgetValue) {
@@ -12229,10 +12348,21 @@ function renderOptionsWithEquipment(box, site, perf, needs) {
       } else {
         p2 += LANG === 'fr' ? 'Aucune contrainte spécifique définie.' : 'No specific constraints defined.';
       }
-      if (specialReqs) {
-        p2 += ' <span style="color:#856404">' + (LANG === 'fr' ? 'Exigence spéciale: ' : 'Special requirement: ') + specialReqs + '</span>';
-      }
       reportParagraphs.push(p2);
+      
+      // Paragraph 2.5: Project Scope (NEW - Retrofit/New Installation context)
+      if (isRetrofit || specialReqs) {
+        var p25 = LANG === 'fr' ? '<strong style="color:#003361">Portée du projet:</strong> ' : '<strong style="color:#003361">Project Scope:</strong> ';
+        if (isRetrofit) {
+          p25 += LANG === 'fr' 
+            ? '<span style="background:#fff3cd;padding:2px 8px;border-radius:4px;color:#856404;font-weight:600">RETROFIT</span> '
+            : '<span style="background:#fff3cd;padding:2px 8px;border-radius:4px;color:#856404;font-weight:600">RETROFIT</span> ';
+        }
+        if (specialReqs) {
+          p25 += specialReqs;
+        }
+        reportParagraphs.push(p25);
+      }
       
       // Paragraph 3: Option Logic
       var optionLogic = {
@@ -16337,6 +16467,110 @@ function renderContract(box) {
   console.log('renderContract completed');
 }
 
+// =============================================================================
+// Smart Summary Function for Step 07 Quote Display
+// =============================================================================
+function summarizeForQuoteBox(fullText, maxLength) {
+  if (!fullText) return '';
+  
+  // Clean the text first
+  var text = fullText
+    .replace(/<[^>]+>/g, '') // Remove HTML tags
+    .replace(/\s+/g, ' ')     // Normalize whitespace
+    .trim();
+  
+  // If already short enough, return as is
+  if (text.length <= maxLength) {
+    return text;
+  }
+  
+  // Extract key information patterns
+  var summaryParts = [];
+  
+  // 1. Project type (first sentence usually contains this)
+  var firstSentence = text.split(/[.!?]/)[0];
+  if (firstSentence && firstSentence.length > 10) {
+    // Shorten if too long
+    if (firstSentence.length > 120) {
+      firstSentence = firstSentence.substring(0, 117) + '...';
+    }
+    summaryParts.push(firstSentence.trim() + '.');
+  }
+  
+  // 2. Extract equipment info (look for patterns like "including X equipment")
+  var equipmentMatch = text.match(/including\s+(\d+\s+\w+[^.]*)/i) || 
+                       text.match(/comprenant\s+(\d+\s+\w+[^.]*)/i);
+  if (equipmentMatch && summaryParts.join(' ').indexOf(equipmentMatch[1]) === -1) {
+    // Already in first sentence, skip
+  }
+  
+  // 3. Extract industry/process (look for "process" or "operations")
+  var processMatch = text.match(/(\w+\s+(?:Processing|operations)[^.]*)/i) ||
+                     text.match(/(procédé\s+de\s+[^.]*)/i);
+  if (processMatch && processMatch[1].length < 60) {
+    if (summaryParts.join(' ').toLowerCase().indexOf(processMatch[1].toLowerCase()) === -1) {
+      summaryParts.push(processMatch[1].trim() + '.');
+    }
+  }
+  
+  // 4. Extract materials (look for "Materials handled:" or similar)
+  var materialsMatch = text.match(/Materials?\s*(?:handled)?:?\s*([^.]+)/i) ||
+                       text.match(/Matériaux\s*(?:traités)?:?\s*([^.]+)/i);
+  if (materialsMatch && materialsMatch[1].length < 50) {
+    var materials = 'Materials: ' + materialsMatch[1].trim();
+    if (materials.length < 60) {
+      summaryParts.push(materials + '.');
+    }
+  }
+  
+  // 5. Extract key special requirements (first requirement only)
+  var reqMatch = text.match(/Special\s+requirements?:?\s*([^.]+)/i) ||
+                 text.match(/Exigences?\s+(?:particulières?|spéciales?):?\s*([^.]+)/i);
+  if (reqMatch && reqMatch[1]) {
+    var req = reqMatch[1].trim();
+    // Take only first requirement if multiple
+    var firstReq = req.split(/[,;]/)[0].trim();
+    if (firstReq.length > 80) {
+      firstReq = firstReq.substring(0, 77) + '...';
+    }
+    if (firstReq.length > 10) {
+      summaryParts.push('Special requirements: ' + firstReq + '.');
+    }
+  }
+  
+  // Build summary
+  var summary = summaryParts.join(' ');
+  
+  // If still too long, truncate intelligently
+  if (summary.length > maxLength) {
+    // Keep first sentence + truncate
+    var truncated = summary.substring(0, maxLength - 3);
+    var lastPeriod = truncated.lastIndexOf('.');
+    var lastSpace = truncated.lastIndexOf(' ');
+    
+    if (lastPeriod > maxLength * 0.6) {
+      summary = truncated.substring(0, lastPeriod + 1);
+    } else if (lastSpace > maxLength * 0.7) {
+      summary = truncated.substring(0, lastSpace) + '...';
+    } else {
+      summary = truncated + '...';
+    }
+  }
+  
+  // If summary is too short (extraction failed), use simple truncation
+  if (summary.length < 50) {
+    summary = text.substring(0, maxLength - 3);
+    var lastSpace = summary.lastIndexOf(' ');
+    if (lastSpace > maxLength * 0.7) {
+      summary = summary.substring(0, lastSpace) + '...';
+    } else {
+      summary = summary + '...';
+    }
+  }
+  
+  return summary;
+}
+
 function renderPreview(box) {
   // CONTRACT STATUS ALERT (Screen only - above document)
   var statusAlert = el('div');
@@ -16514,7 +16748,7 @@ function renderPreview(box) {
   
   var doc = el('div');
   doc.id = 'previewDocument';
-  doc.style.cssText = 'max-width:816px;margin:0 auto;background:#fff;box-shadow:0 4px 6px rgba(0,0,0,0.1);padding:40px';
+  doc.style.cssText = 'max-width:816px;margin:0 auto;background:#fff;box-shadow:0 4px 6px rgba(0,0,0,0.1);padding:40px;font-family:Inter,Segoe UI,system-ui,Arial,sans-serif';
   
   // Page indicator
   var pageIndicator = el('div');
@@ -16584,8 +16818,10 @@ function renderPreview(box) {
   summaryDiv.style.cssText = 'font-size:13px;line-height:1.7;color:#1f2937;text-align:justify';
   
   if (p && p.value_proposition_text) {
-    // Use the clean plain text version
-    summaryDiv.textContent = p.value_proposition_text;
+    // Smart summary for Step 07 display (max ~400 chars for proper fit)
+    var fullText = p.value_proposition_text;
+    var summarizedText = summarizeForQuoteBox(fullText, 400);
+    summaryDiv.textContent = summarizedText;
   } else if (p && p.customer_needs) {
     // Fallback: build summary from raw data
     var parts = [];
@@ -16598,7 +16834,8 @@ function renderPreview(box) {
     if (p.customer_needs.timeline) {
       parts.push((LANG === 'FR' ? 'Échéancier : ' : 'Timeline: ') + p.customer_needs.timeline);
     }
-    summaryDiv.textContent = parts.join('. ');
+    var rawText = parts.join('. ');
+    summaryDiv.textContent = summarizeForQuoteBox(rawText, 400);
   } else {
     summaryDiv.textContent = LANG === 'FR' 
       ? 'Générez le résumé des besoins client dans Step 03 pour afficher les détails du projet.'
@@ -16607,6 +16844,24 @@ function renderPreview(box) {
     summaryDiv.style.color = '#9ca3af';
   }
   rightBox.appendChild(summaryDiv);
+  
+  // Edit link (screen only - not printed)
+  var editLinkHeader = el('div');
+  editLinkHeader.className = 'screen-only';
+  editLinkHeader.style.cssText = 'margin-top:8px;font-size:11px;color:#6b7280';
+  var editLink1 = el('a');
+  editLink1.href = '#';
+  editLink1.style.cssText = 'color:#003361;text-decoration:underline;cursor:pointer';
+  editLink1.textContent = LANG === 'fr' 
+    ? '✏️ Pour modifier ce résumé, retournez à Step 03 (Performance)' 
+    : '✏️ To edit this summary, go back to Step 03 (Performance)';
+  editLink1.onclick = function(e) {
+    e.preventDefault();
+    showStep('perf');
+    window.scrollTo(0, 0);
+  };
+  editLinkHeader.appendChild(editLink1);
+  rightBox.appendChild(editLinkHeader);
   
   bottomSection.appendChild(rightBox);
   hdr.appendChild(bottomSection);
@@ -16693,21 +16948,22 @@ function renderPreview(box) {
     summaryDiv.textContent = cleanProposal;
     sec1.appendChild(summaryDiv);
     
-    // Link to edit in Step 04 (screen only)
+    // Link to edit in Step 04 (screen only - not printed)
     var editLinkDiv = el('div');
     editLinkDiv.className = 'screen-only';
-    editLinkDiv.style.cssText = 'margin-top:16px;padding:12px;background:#f5f5f5;border-radius:6px;font-size:13px;color:#003361;display:flex;align-items:center;gap:8px';
-    editLinkDiv.innerHTML = 'Pour modifier ce résumé, retournez à ';
-    
-    var editLink = el('span');
-    editLink.style.cssText = 'font-weight:700;text-decoration:underline;cursor:pointer';
-    editLink.textContent = 'Step 04 (Options)';
-    editLink.onclick = function() {
+    editLinkDiv.style.cssText = 'margin-top:12px;font-size:11px;color:#6b7280';
+    var editLink = el('a');
+    editLink.href = '#';
+    editLink.style.cssText = 'color:#003361;text-decoration:underline;cursor:pointer';
+    editLink.textContent = LANG === 'fr' 
+      ? '✏️ Pour modifier ce résumé, retournez à Step 04 (Options)' 
+      : '✏️ To edit this summary, go back to Step 04 (Options)';
+    editLink.onclick = function(e) {
+      e.preventDefault();
       showStep('opts');
-      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      window.scrollTo(0, 0);
     };
     editLinkDiv.appendChild(editLink);
-    
     sec1.appendChild(editLinkDiv);
   } else {
     // No report - simple message
@@ -20328,7 +20584,20 @@ $('#saveProject').onclick = function() {
   var blob = new Blob([JSON.stringify(state, null, 2)], {type: 'application/json'});
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'quotation-v10.2-' + Date.now() + '.json';
+  
+  // Generate meaningful filename: ProjectName-ClientName-YYYYMMDD.json
+  var projectName = (state.project.header.project_name || 'Project')
+    .replace(/[^a-zA-Z0-9가-힣]/g, '-')
+    .replace(/-+/g, '-')
+    .substring(0, 30);
+  var clientName = (state.project.header.client || 'Client')
+    .replace(/[^a-zA-Z0-9가-힣]/g, '-')
+    .replace(/-+/g, '-')
+    .substring(0, 20);
+  var dateStr = new Date().toISOString().slice(0,10).replace(/-/g, '');
+  var quoteId = state.project.header.quote_id || 'QT';
+  
+  a.download = quoteId + '_' + projectName + '_' + clientName + '_' + dateStr + '.json';
   a.click();
 };
 
@@ -20668,6 +20937,209 @@ async function generateAIDescriptionWithKey(option, equipmentName, focusName, ta
     generateStaticDescription(option, equipmentName, focusName, targetElement);
   }
 }
+
+// =============================================================================
+// AI Chat Panel - Step-specific AI Assistant
+// =============================================================================
+
+var aiChatState = {
+  isOpen: false,
+  isMinimized: true,
+  currentStep: '',
+  messages: [],
+  isTyping: false
+};
+
+function initAIChatPanel() {
+  // Create chat panel HTML
+  var panel = document.createElement('div');
+  panel.id = 'aiChatPanel';
+  panel.className = 'ai-chat-panel minimized';
+  panel.innerHTML = `
+    <div class="ai-chat-header" onclick="toggleAIChatPanel()">
+      <span>🤖 AI Assistant</span>
+      <button id="aiChatToggleBtn">▲</button>
+    </div>
+    <div class="ai-chat-body" id="aiChatBody">
+      <div class="ai-chat-message assistant">
+        ${LANG === 'fr' 
+          ? 'Bonjour! Je suis votre assistant AI. Posez-moi des questions sur cette étape ou demandez de l\'aide pour remplir les champs.'
+          : 'Hello! I\'m your AI assistant. Ask me questions about this step or request help filling in fields.'}
+      </div>
+    </div>
+    <div class="ai-chat-input">
+      <input type="text" id="aiChatInput" placeholder="${LANG === 'fr' ? 'Posez une question...' : 'Ask a question...'}" onkeypress="if(event.key==='Enter')sendAIChatMessage()">
+      <button onclick="sendAIChatMessage()" id="aiChatSendBtn">${LANG === 'fr' ? 'Envoyer' : 'Send'}</button>
+    </div>
+  `;
+  document.body.appendChild(panel);
+}
+
+function toggleAIChatPanel() {
+  var panel = document.getElementById('aiChatPanel');
+  var btn = document.getElementById('aiChatToggleBtn');
+  
+  if (panel.classList.contains('minimized')) {
+    panel.classList.remove('minimized');
+    btn.textContent = '▼';
+    aiChatState.isMinimized = false;
+    
+    // Update context based on current step
+    updateAIChatContext();
+  } else {
+    panel.classList.add('minimized');
+    btn.textContent = '▲';
+    aiChatState.isMinimized = true;
+  }
+}
+
+function updateAIChatContext() {
+  aiChatState.currentStep = currentTab;
+  
+  var stepContexts = {
+    'project': { en: 'Project Header & Basic Info', fr: 'En-tête du projet' },
+    'site': { en: 'Site Data & Equipment', fr: 'Données du site' },
+    'perf': { en: 'Customer Needs & Priorities', fr: 'Besoins client' },
+    'opts': { en: 'Option Configuration', fr: 'Configuration des options' },
+    'quote': { en: 'Quote Builder & Pricing', fr: 'Élaboration du devis' },
+    'contract': { en: 'Contract Terms', fr: 'Conditions contractuelles' },
+    'final': { en: 'Final Document', fr: 'Document final' }
+  };
+  
+  var context = stepContexts[currentTab] || { en: 'General', fr: 'Général' };
+  var header = document.querySelector('#aiChatPanel .ai-chat-header span');
+  if (header) {
+    header.textContent = '🤖 AI - ' + (LANG === 'fr' ? context.fr : context.en);
+  }
+}
+
+async function sendAIChatMessage() {
+  var input = document.getElementById('aiChatInput');
+  var body = document.getElementById('aiChatBody');
+  var sendBtn = document.getElementById('aiChatSendBtn');
+  
+  var message = input.value.trim();
+  if (!message || aiChatState.isTyping) return;
+  
+  // Add user message
+  var userMsg = document.createElement('div');
+  userMsg.className = 'ai-chat-message user';
+  userMsg.textContent = message;
+  body.appendChild(userMsg);
+  
+  input.value = '';
+  aiChatState.isTyping = true;
+  sendBtn.disabled = true;
+  
+  // Add typing indicator
+  var typingIndicator = document.createElement('div');
+  typingIndicator.className = 'ai-chat-typing';
+  typingIndicator.textContent = LANG === 'fr' ? 'AI réfléchit...' : 'AI is thinking...';
+  body.appendChild(typingIndicator);
+  body.scrollTop = body.scrollHeight;
+  
+  try {
+    var apiKey = localStorage.getItem('CLAUDE_API_KEY');
+    if (!apiKey) {
+      throw new Error('API key not configured');
+    }
+    
+    // Build context from current step data
+    var stepData = getStepContextData();
+    
+    var systemPrompt = `You are an AI assistant helping with a quotation builder for industrial dust collection systems.
+Current Step: ${currentTab}
+Step Context: ${JSON.stringify(stepData, null, 2)}
+
+Provide helpful, concise answers about:
+- How to fill in fields for this step
+- Best practices for industrial equipment quotations
+- Explanations of technical terms
+- Suggestions based on the current data
+
+Keep responses brief (2-3 sentences) unless detailed explanation is needed.
+Respond in ${LANG === 'fr' ? 'French' : 'English'}.`;
+
+    var response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 500,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: message }]
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error('API error');
+    }
+    
+    var data = await response.json();
+    var aiResponse = data.content[0].text;
+    
+    // Remove typing indicator
+    body.removeChild(typingIndicator);
+    
+    // Add AI response
+    var aiMsg = document.createElement('div');
+    aiMsg.className = 'ai-chat-message assistant';
+    aiMsg.textContent = aiResponse;
+    body.appendChild(aiMsg);
+    
+  } catch (error) {
+    // Remove typing indicator
+    if (typingIndicator.parentNode) {
+      body.removeChild(typingIndicator);
+    }
+    
+    var errorMsg = document.createElement('div');
+    errorMsg.className = 'ai-chat-message assistant';
+    errorMsg.style.borderColor = '#bf1122';
+    errorMsg.textContent = LANG === 'fr' 
+      ? 'Erreur: Vérifiez votre clé API ou réessayez.'
+      : 'Error: Check your API key or try again.';
+    body.appendChild(errorMsg);
+  }
+  
+  aiChatState.isTyping = false;
+  sendBtn.disabled = false;
+  body.scrollTop = body.scrollHeight;
+}
+
+function getStepContextData() {
+  var context = {
+    step: currentTab,
+    project_name: state.project.header.project_name || '',
+    client: state.project.header.client || ''
+  };
+  
+  switch(currentTab) {
+    case 'site':
+      context.industry = state.project.site.industry_sector || '';
+      context.equipment_count = (state.project.site.existing_equipment || []).length;
+      context.materials = state.project.site.handled_materials || [];
+      break;
+    case 'perf':
+      context.priorities = state.project.perf?.priority_matrix || [];
+      context.special_requirements = state.project.perf?.customer_needs?.special_requirements || '';
+      break;
+    case 'opts':
+      context.options = Object.keys(state.project.options_data || {});
+      break;
+  }
+  
+  return context;
+}
+
+// Initialize AI Chat Panel when page loads
+document.addEventListener('DOMContentLoaded', function() {
+  setTimeout(initAIChatPanel, 1000);
+});
 
 </script>
 </body>
